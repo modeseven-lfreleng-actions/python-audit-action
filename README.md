@@ -42,13 +42,13 @@ In the above example, a prior Python build job has run (not shown).
 
 <!-- markdownlint-disable MD013 -->
 
-| Variable Name   | Required | Default | Description                                               |
-| --------------- | -------- | ------- | --------------------------------------------------------- |
-| PYTHON_VERSION  | True     | N/A     | Matrix job Python version                                 |
-| NEVER_FAIL      | False    | False   | Even if a test fails, the workflow will NOT stop on error |
-| ARTEFACT_PATH   | False    | "dist"  | Stores the test coverage report bundle as an artefact     |
-| SUMMARY         | False    | True    | Whether pypa/gh-action-pip-audit generates summary output |
-| PATH_PREFIX     | False    | ""      | Path/directory to Python project code                     |
+| Variable Name   | Required | Default | Description                                                 |
+| --------------- | -------- | ------- | ----------------------------------------------------------- |
+| python_verions  | True     | N/A     | Matrix job Python version                                   |
+| never_fail      | False    | False   | Even if an audit fails, the workflow will NOT stop on error |
+| artefact_path   | False    | "dist"  | Stores the test coverage report bundle as an artefact       |
+| summary         | False    | True    | Whether pypa/gh-action-pip-audit generates summary output   |
+| path_prefix     | False    | ""      | Path/directory to Python project code                       |
 
 <!-- markdownlint-enable MD013 -->
 
