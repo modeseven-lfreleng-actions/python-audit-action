@@ -55,7 +55,7 @@ jobs:
 
       - name: "Inject known defective dependency"
         # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/file-sed-regex-action@efa95bbf4a4add4f30d972843ca7902e8f7e48e4 # v0.1.1
+        uses: lfreleng-actions/file-sed-regex-action@e2c1c94d7936e1ded3e5fa8109416383f472ef7c # v0.1.2
         with:
           flags: "-i -E"
           # yamllint disable-line rule:line-length
