@@ -45,7 +45,7 @@ In the above example, a prior Python build job has run (not shown).
 | Variable Name   | Required | Default | Description                                                 |
 | --------------- | -------- | ------- | ----------------------------------------------------------- |
 | python_verions  | True     | N/A     | Matrix job Python version                                   |
-| never_fail      | False    | False   | Even if an audit fails, the workflow will NOT stop on error |
+| permit_fail     | False    | False   | Continue/pass even when the audit fails                     |
 | artefact_path   | False    | "dist"  | Stores the test coverage report bundle as an artefact       |
 | summary         | False    | True    | Whether pypa/gh-action-pip-audit generates summary output   |
 | path_prefix     | False    | ""      | Path/directory to Python project code                       |

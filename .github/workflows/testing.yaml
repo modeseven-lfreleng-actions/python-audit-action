@@ -94,3 +94,13 @@ jobs:
           # Check previous step failure
           echo "Error: previous step should have failed ❌"
           exit 1
+
+      # Perform audit where project has known security vulnerability
+      - name: "Run action: ${{ github.repository }} [Failure Test]"
+        id: tests-fail-permitted
+        uses: ./
+        with:
+          python_version: "${{ env.build_python }}"
+          path_prefix: "test-python-project/"
+          # Override failure
+          permit_fail: true

@@ -4,8 +4,7 @@
 
 # python-audit-action
 name: '🐍 Python Dependency Audit'
-# yamllint disable-line rule:line-length
-description: 'Check a Python project dependencies for known security vulnerabilities'
+description: 'Check Python dependencies for known security vulnerabilities'
 
 inputs:
   # Mandatory
@@ -13,9 +12,10 @@ inputs:
     description: 'Python version used to perform audit'
     required: true
   # Optional
-  never_fail:
-    description: 'Continue even when an audit fails'
+  permit_fail:
+    description: 'Continue/pass even when the audit fails'
     required: false
+    type: boolean
     default: false
   artefact_path:
     description: 'Path/location to build artefacts'
@@ -73,7 +73,7 @@ runs:
         fi
 
     - name: 'Auditing with: pypa/gh-action-pip-audit'
-      if: ${{ inputs.never_fail == 'false' }}
+      if: ${{ inputs.permit_fail == 'false' }}
       # yamllint disable-line rule:line-length
       uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
       with:
@@ -81,7 +81,7 @@ runs:
         summary: "${{ inputs.summary }}"
 
     - name: 'Auditing with: pypa/gh-action-pip-audit'
-      if: ${{ inputs.never_fail == 'true' }}
+      if: ${{ inputs.permit_fail == 'true' }}
       continue-on-error: true
       # yamllint disable-line rule:line-length
       uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
