@@ -32,6 +32,11 @@ inputs:
     # type: string
     required: false
     default: ''
+  ignore_vulns:
+    description: 'Vulnerability IDs to ignore (whitespace separated)'
+    # type: string
+    required: false
+    default: 'GHSA-4xh5-x5gv-qwph'
 
 runs:
   using: 'composite'
@@ -97,6 +102,7 @@ runs:
       with:
         inputs: "${{ inputs.path_prefix }}"
         summary: "${{ inputs.summary }}"
+        ignore-vulns: "${{ inputs.ignore_vulns }}"
 
     - name: 'Auditing with: pypa/gh-action-pip-audit'
       if: ${{ inputs.permit_fail == 'true' }}
@@ -106,3 +112,4 @@ runs:
       with:
         inputs: "${{ inputs.path_prefix }}"
         summary: "${{ inputs.summary }}"
+        ignore-vulns: "${{ inputs.ignore_vulns }}"
