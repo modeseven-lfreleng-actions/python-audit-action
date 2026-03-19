@@ -18,7 +18,7 @@ permissions: {}
 env:
   # flask==0.5 contains a known security vulnerability
   # yamllint disable-line rule:line-length
-  replacement_string: '[\"typer>=0.15.2\", \"jupyterlab>=4.3.6\", \"flask==0.5\"]'
+  replacement_string: '["typer>=0.15.2", "jupyterlab>=4.3.6", "flask==0.5"]'
 
 jobs:
   ### Test the GitHub Action in this Repository ###
@@ -54,20 +54,32 @@ jobs:
           python_version: "${{ env.build_python }}"
           path_prefix: "test-python-project/"
 
+      # Replace the entire multi-line dependencies array with a
+      # single-line version containing a known vulnerable package.
+      # Uses sed address-range to match from "dependencies = ["
+      # through the closing "]", replacing the whole block.
       - name: "Inject known defective dependency"
-        # yamllint disable-line rule:line-length
-        uses: lfreleng-actions/file-sed-regex-action@e2c1c94d7936e1ded3e5fa8109416383f472ef7c # v0.1.2
-        with:
-          flags: "-i -E"
-          # yamllint disable-line rule:line-length
-          regex: 's:^dependencies =.*$:dependencies = ${{ env.replacement_string }}:'
-          path: "test-python-project/pyproject.toml"
-
-      - name: "Check/validate string substitution"
         shell: bash
         run: |
-          # Check/validate string substitution
-          grep dependencies "test-python-project/pyproject.toml"
+          # Inject known defective dependency
+          FILE="test-python-project/pyproject.toml"
+          REPLACEMENT='dependencies = ${{ env.replacement_string }}'
+
+          # Use sed address range to replace multi-line array block
+          # Matches from "dependencies = [" to next line starting "]"
+          sed -i '/^dependencies = \[/,/^\]/c\'"$REPLACEMENT" "$FILE"
+
+          # Validate the substitution produced valid TOML
+          echo "Validating TOML after substitution..."
+          python -c "
+          import tomllib
+          with open('$FILE', 'rb') as f:
+              data = tomllib.load(f)
+          deps = data['project']['dependencies']
+          print(f'dependencies = {deps}')
+          assert 'flask==0.5' in deps, 'flask==0.5 not found'
+          print('TOML validation passed ✅')
+          "
 
       # Rebuild sample Python project
       - name: "Rebuild Python Project"
