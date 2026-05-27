@@ -39,10 +39,50 @@ inputs:
     required: false
     default: ''
   ignore_vulns:
-    description: 'Vulnerability IDs to ignore (whitespace separated)'
+    description: >
+      Vulnerability IDs to ignore (whitespace separated). These IDs
+      are merged with any IDs sourced from the allow-list file (see
+      the allow_list_* inputs); duplicates are de-duplicated.
     # type: string
     required: false
     default: 'GHSA-4xh5-x5gv-qwph'
+  allow_list_path:
+    description: >
+      Local filesystem path to a vulnerability allow-list file. When
+      set, takes precedence over allow_list_url and allow_list_org.
+      File format: whitespace-separated vulnerability IDs (CVE-,
+      GHSA-, PYSEC-, OSV-, PVE-); '#' introduces a comment (full-line
+      or trailing). Must not contain newline characters.
+    # type: string
+    required: false
+    default: ''
+  allow_list_url:
+    description: >
+      Remote HTTPS URL to download the allow-list from. Ignored when
+      allow_list_path is set. When both allow_list_path and
+      allow_list_url are empty the action constructs a default URL
+      from allow_list_org (see below). Must not contain newline
+      characters.
+    # type: string
+    required: false
+    default: ''
+  allow_list_org:
+    description: >
+      GitHub organisation/owner used to construct the default
+      allow-list URL when neither allow_list_path nor allow_list_url
+      is supplied. Defaults at runtime to github.repository_owner.
+      Default URL pattern:
+      https://raw.githubusercontent.com/<org>/.github/HEAD/.github/python-audit/<org>/allow_list.txt
+    # type: string
+    required: false
+    default: ''
+  allow_list_disable:
+    description: >
+      When 'true', skip allow-list loading entirely and use only the
+      'ignore_vulns' input.
+    # type: boolean
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -105,6 +145,207 @@ runs:
           pip install -q -r "$req_file"
         fi
 
+    - name: 'Resolve vulnerability allow-list'
+      id: allow_list
+      shell: bash
+      env:
+        ALLOW_LIST_PATH: "${{ inputs.allow_list_path }}"
+        ALLOW_LIST_URL: "${{ inputs.allow_list_url }}"
+        ALLOW_LIST_ORG: "${{ inputs.allow_list_org }}"
+        ALLOW_LIST_DISABLE: "${{ inputs.allow_list_disable }}"
+        REPO_OWNER: "${{ github.repository_owner }}"
+      run: |
+        # Resolve vulnerability allow-list
+        #
+        # Precedence:
+        #   allow_list_path > allow_list_url > default URL from org.
+        # Soft-fail rule:
+        #   The default-URL case (no path, no url) treats fetch
+        #   failures as "no allow-list" and proceeds silently. An
+        #   explicitly-supplied path or url is a hard failure when
+        #   it cannot be loaded, since the caller asked for it.
+        # Sanitisation:
+        #   Every token is matched against a strict allow-list of
+        #   vulnerability ID shapes (CVE-/GHSA-/PYSEC-/OSV-/PVE-).
+        #   Non-conforming content fails the step rather than being
+        #   silently dropped.
+        set -euo pipefail
+
+        emit() {
+          # Append a key=value pair to GITHUB_OUTPUT, refusing values
+          # containing newlines (none of our outputs ever need them).
+          local key="$1"
+          local value="$2"
+          if printf '%s' "$value" | grep -q $'[\r\n]'; then
+            echo "::error::Refusing to write multi-line output for ${key}"
+            exit 1
+          fi
+          printf '%s=%s\n' "$key" "$value" >> "$GITHUB_OUTPUT"
+        }
+
+        summary_line() {
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"
+          fi
+        }
+
+        if [ "$ALLOW_LIST_DISABLE" = "true" ]; then
+          echo "Allow-list loading disabled via allow_list_disable input"
+          emit "ids" ""
+          emit "source" "disabled"
+          emit "resolved_url" ""
+          emit "count" "0"
+          exit 0
+        fi
+
+        # Reject newlines in path/url inputs to keep downstream
+        # GITHUB_OUTPUT writes safe.
+        for name in ALLOW_LIST_PATH ALLOW_LIST_URL; do
+          value="${!name}"
+          if printf '%s' "$value" | grep -q $'[\r\n]'; then
+            echo "::error::Input '${name}' must not contain newline characters"
+            exit 1
+          fi
+        done
+
+        source=""
+        resolved_url=""
+        raw=""
+        soft_fail="false"
+
+        if [ -n "$ALLOW_LIST_PATH" ]; then
+          source="path"
+          if [ ! -f "$ALLOW_LIST_PATH" ]; then
+            echo "::error::Allow-list file not found at: ${ALLOW_LIST_PATH}"
+            exit 1
+          fi
+          raw=$(cat -- "$ALLOW_LIST_PATH")
+          echo "Source: local path -> ${ALLOW_LIST_PATH}"
+        else
+          if [ -n "$ALLOW_LIST_URL" ]; then
+            source="url"
+            resolved_url="$ALLOW_LIST_URL"
+          else
+            org="${ALLOW_LIST_ORG:-$REPO_OWNER}"
+            # GitHub org/user names: 1-39 chars, alphanumerics and
+            # hyphens, no leading/trailing hyphen, no consecutive
+            # hyphens. A bad org name produces a URL that can never
+            # resolve; reject it up front.
+            if ! printf '%s' "$org" \
+              | grep -Eq '^[A-Za-z0-9](-?[A-Za-z0-9]){0,38}$'; then
+              echo "::error::Resolved org name is invalid: '${org}'"
+              exit 1
+            fi
+            resolved_url="https://raw.githubusercontent.com/${org}/.github/HEAD/.github/python-audit/${org}/allow_list.txt"
+            source="default-url"
+            soft_fail="true"
+          fi
+
+          # HTTPS-only, 15s timeout, 1 MiB size ceiling, follow
+          # redirects. --fail turns 4xx/5xx into curl exit codes.
+          tmp=$(mktemp)
+          trap 'rm -f "$tmp"' EXIT
+          set +e
+          curl --proto '=https' --tlsv1.2 \
+            -sSfL --max-time 15 --max-filesize 1048576 \
+            -H 'User-Agent: lfreleng-actions/python-audit-action' \
+            -H 'Accept: text/plain, */*;q=0.5' \
+            -o "$tmp" \
+            "$resolved_url"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            if [ "$soft_fail" = "true" ]; then
+              # No allow-list published for this org; proceed
+              # silently with whatever ignore_vulns provided.
+              echo "No central allow-list at default URL;" \
+                   "proceeding without it"
+              emit "ids" ""
+              emit "source" "default-url-missing"
+              emit "resolved_url" "$resolved_url"
+              emit "count" "0"
+              exit 0
+            fi
+            echo "::error::Failed to fetch allow-list from" \
+                 "${resolved_url} (curl exit ${rc})"
+            exit 1
+          fi
+          raw=$(cat -- "$tmp")
+          echo "Source: ${source} -> ${resolved_url}"
+        fi
+
+        # Strip UTF-8 BOM, strip '#' comments (full-line and
+        # trailing), collapse whitespace.
+        cleaned=$(printf '%s' "$raw" \
+          | sed -e '1s/^\xEF\xBB\xBF//' \
+                -e 's/[[:space:]]#[^\r\n]*//g' \
+                -e 's/^#[^\r\n]*//g' \
+          | tr '[:space:]' '\n' \
+          | sed '/^$/d')
+
+        ids=""
+        count=0
+        # Strict allow-list of vulnerability ID shapes. Any token
+        # that does not match one of these is a hard failure.
+        id_re='^('
+        id_re+='CVE-[0-9]{4}-[0-9]{4,}'
+        id_re+='|GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}'
+        id_re+='|PYSEC-[0-9]{4}-[0-9]+'
+        id_re+='|OSV-[0-9]{4}-[0-9]+'
+        id_re+='|PVE-[0-9]+'
+        id_re+=')$'
+        while IFS= read -r token; do
+          [ -z "$token" ] && continue
+          if ! printf '%s' "$token" | grep -Eq "$id_re"; then
+            echo "::error::Rejected allow-list token '${token}'" \
+                 "(not a recognised CVE/GHSA/PYSEC/OSV/PVE ID)"
+            exit 1
+          fi
+          if [ -z "$ids" ]; then
+            ids="$token"
+          else
+            ids="${ids} ${token}"
+          fi
+          count=$((count + 1))
+        done <<< "$cleaned"
+
+        echo "Loaded ${count} allow-list entries from source '${source}'"
+        emit "ids" "$ids"
+        emit "source" "$source"
+        emit "resolved_url" "$resolved_url"
+        emit "count" "$count"
+
+        summary_line "### 🐍 Python audit allow-list"
+        summary_line ""
+        if [ -n "$resolved_url" ]; then
+          summary_line "- Source: \`${source}\` (\`${resolved_url}\`)"
+        else
+          summary_line "- Source: \`${source}\`"
+        fi
+        summary_line "- Entries loaded: **${count}**"
+        summary_line ""
+
+    - name: 'Merge ignore_vulns with allow-list'
+      id: merged
+      shell: bash
+      env:
+        BASE_IGNORE: "${{ inputs.ignore_vulns }}"
+        ALLOW_LIST_IDS: "${{ steps.allow_list.outputs.ids }}"
+      run: |
+        # Merge ignore_vulns with allow-list IDs (whitespace-
+        # separated, de-duplicated, order-preserving).
+        set -euo pipefail
+        merged=$(printf '%s %s' "$BASE_IGNORE" "$ALLOW_LIST_IDS" \
+          | tr '[:space:]' '\n' \
+          | awk 'NF && !seen[$0]++' \
+          | paste -sd' ' -)
+        echo "ignore_vulns=${merged}" >> "$GITHUB_OUTPUT"
+        if [ -n "$merged" ]; then
+          echo "Effective ignore_vulns: ${merged}"
+        else
+          echo "Effective ignore_vulns: (none)"
+        fi
+
     - name: 'Auditing with: pypa/gh-action-pip-audit'
       if: ${{ inputs.permit_fail == 'false' }}
       # yamllint disable-line rule:line-length
@@ -112,7 +353,7 @@ runs:
       with:
         inputs: "${{ inputs.path_prefix }}"
         summary: "${{ inputs.summary }}"
-        ignore-vulns: "${{ inputs.ignore_vulns }}"
+        ignore-vulns: "${{ steps.merged.outputs.ignore_vulns }}"
 
     - name: 'Auditing with: pypa/gh-action-pip-audit'
       if: ${{ inputs.permit_fail == 'true' }}
@@ -122,4 +363,4 @@ runs:
       with:
         inputs: "${{ inputs.path_prefix }}"
         summary: "${{ inputs.summary }}"
-        ignore-vulns: "${{ inputs.ignore_vulns }}"
+        ignore-vulns: "${{ steps.merged.outputs.ignore_vulns }}"
