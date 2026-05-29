@@ -314,6 +314,24 @@ commit supplied the allow-list.
 > pull requests across `python-audit-action` and
 > `harden-runner-block-action`.
 
+#### Suppressing the step summary on matrix jobs
+
+Each matrix leg is a separate job with its own step summary, so the
+allow-list block repeats once per leg. An action cannot detect the
+matrix context itself, but the calling workflow can. Set
+`allow_list_summary` so a single leg emits the block:
+
+```yaml
+        with:
+          python_version: ${{ matrix.python-version }}
+          # Emit the allow-list summary from the first matrix leg.
+          allow_list_summary: ${{ strategy.job-index == 0 }}
+```
+
+Outside a matrix, `strategy.job-index` is empty; use
+`${{ !strategy.job-total || strategy.job-index == 0 }}` if a single
+template must cover both matrix and non-matrix jobs.
+
 ## Inputs
 
 <!-- markdownlint-disable MD013 -->
@@ -333,6 +351,7 @@ commit supplied the allow-list.
 | allow_list_disable | False    | False     | Skip allow-list loading entirely.                                                                                                                            |
 | config             | False    | ""        | `uses:`-style coordinate for a git-fetched, SHA-pinnable allow-list. Mutually exclusive with the `allow_list_*` inputs. See above.                           |
 | token              | False    | ""        | Token with `contents:read` for fetching a private host repo via `config`. Leave empty for public repos.                                                      |
+| allow_list_summary | False    | True      | Write the allow-list/config block to the job step summary. Set `false` to suppress (e.g. on matrix legs other than the first). See note below.               |
 
 <!-- markdownlint-enable MD013 -->
 
