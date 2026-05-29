@@ -197,6 +197,123 @@ GHSA-4xh5-x5gv-qwph
 PYSEC-2025-183
 ```
 
+### Pinned allow-list via `config` (git, SHA-pinnable)
+
+The `config` input is a GitHub-Actions `uses:`-style coordinate that
+identifies a remote allow-list file and fetches it with a shallow,
+ref-pinned **git** fetch (rather than an unpinned HTTP download). It
+supports branches, tags and commit SHAs, so you can pin the
+allow-list to an immutable commit, much like an action pin.
+
+> [!IMPORTANT]
+> `config` is **mutually exclusive** with the `allow_list_*` inputs.
+> Supplying any of `allow_list_path`, `allow_list_url`,
+> `allow_list_org` or `allow_list_disable` together with `config` is
+> an error. The `ignore_vulns` input is *not* a source and still
+> merges with the IDs loaded via `config`.
+
+```yaml
+      - name: "Audit project dependencies"
+        uses: lfreleng-actions/python-audit-action@main
+        with:
+          python_version: ${{ matrix.python-version }}
+          config: "lfreleng-actions@v1.0.0"
+```
+
+#### `config` grammar
+
+```text
+<config> ::= <source> [ "@" <ref> ] [ <ws>+ "#" <comment> ]
+<source> ::= [ <host-org> [ "/" <repo> ] ] [ "//" <subpath> ]
+```
+
+Defaults applied to anything you omit:
+
+<!-- markdownlint-disable MD013 -->
+
+| Element   | Default                                                             |
+| --------- | ------------------------------------------------------------------- |
+| host-org  | `github.repository_owner` (when you omit the org)                   |
+| repo      | `.github`                                                           |
+| directory | `.github/python-audit/<workflow-org>/` then `.github/python-audit/` |
+| filename  | `allow_list.txt`                                                    |
+| ref       | the host repo's default branch (`HEAD`)                             |
+
+<!-- markdownlint-enable MD013 -->
+
+- The `//` separator splits the repository from the in-repo path
+  (the same convention Terraform/go-getter use). Text after `//`:
+  - **empty** (or no `//`) — default directory search + default
+    filename.
+  - **bare filename** (no `/`) — overrides the filename, keeps the
+    default directory search.
+  - **contains a `/`** — an explicit in-repo path; the action skips
+    the search and that exact path must exist.
+- One or more spaces then `#` starts a trailing comment, which the
+  parser drops (`#`, `#`, `\t#` all work).
+- The output `resolved_sha` always reports the commit the ref
+  resolved to, even when you pin a branch or tag.
+
+#### Search / fallback chain
+
+When the directory is auto-derived (you did not give an explicit
+directory after `//`), the action tries, in order:
+
+1. `.github/python-audit/<workflow-org>/<filename>` (org-specific)
+2. `.github/python-audit/<filename>` (host-wide family default)
+
+The first file that exists wins. If neither exists, the action
+proceeds with `ignore_vulns` alone (soft, no warning) — consistent
+with the default-URL behaviour above. An **explicit** path that is
+missing is always a hard error.
+
+#### `config` examples
+
+Assuming the workflow runs in org `onap`:
+
+<!-- markdownlint-disable MD013 -->
+
+| `config` value                         | Fetched from                    | In-repo path (search chain)                                              |
+| -------------------------------------- | ------------------------------- | ------------------------------------------------------------------------ |
+| `lfreleng-actions@main`                | `lfreleng-actions/.github@main` | `…/python-audit/onap/allow_list.txt` → `…/python-audit/allow_list.txt`   |
+| `lfit@v1.1.0`                          | `lfit/.github@v1.1.0`           | same chain                                                               |
+| `lfit@ab7a940… # v1.0.0`               | `lfit/.github@<sha>`            | same chain; comment ignored                                              |
+| `lfit//custom_list.txt@v1.1.0  # ONAP` | `lfit/.github@v1.1.0`           | `…/python-audit/onap/custom_list.txt` → `…/python-audit/custom_list.txt` |
+| `lfit//@ab7a940…`                      | `lfit/.github@<sha>`            | default chain + `allow_list.txt`                                         |
+| `lfit//configs/onap/list.txt@main`     | `lfit/.github@main`             | `configs/onap/list.txt` (explicit; no search)                            |
+| `//team_list.txt@main`                 | `onap/.github@main`             | `…/python-audit/onap/team_list.txt` → `…/python-audit/team_list.txt`     |
+
+<!-- markdownlint-enable MD013 -->
+
+#### Private host repositories
+
+For a private host-org `.github` repo, pass a token with
+`contents:read` on that repo. `GITHUB_TOKEN` grants access to the
+current repository alone, so pass a PAT or GitHub App token here:
+
+```yaml
+        with:
+          python_version: ${{ matrix.python-version }}
+          config: "my-private-org@v2.0.0"
+          token: ${{ secrets.CONFIG_READ_TOKEN }}
+```
+
+#### `config` outputs
+
+Using `config` makes the action expose: `resolved_host_org`,
+`resolved_repo`, `resolved_ref`, `resolved_sha`, `resolved_path` and
+`matched_candidate`. Use `resolved_sha` to record or assert which
+commit supplied the allow-list.
+
+> [!NOTE]
+> `config` resolution uses the runner's preinstalled `python3` (the
+> resolver needs no third-party packages). GitHub-hosted runners
+> ship it; on self-hosted runners `python3` must sit on `PATH`. Both
+> repositories mirror the shared parser
+> `src/resolve_config_source.py`, and changes must land as paired
+> pull requests across `python-audit-action` and
+> `harden-runner-block-action`.
+
 ## Inputs
 
 <!-- markdownlint-disable MD013 -->
@@ -214,6 +331,8 @@ PYSEC-2025-183
 | allow_list_url     | False    |           | Explicit HTTPS URL to fetch the allow-list from. The action ignores this when `allow_list_path` has a value.                                                 |
 | allow_list_org     | False    |           | Org used to construct the default allow-list URL. Defaults to `github.repository_owner`.                                                                     |
 | allow_list_disable | False    | False     | Skip allow-list loading entirely.                                                                                                                            |
+| config             | False    | ""        | `uses:`-style coordinate for a git-fetched, SHA-pinnable allow-list. Mutually exclusive with the `allow_list_*` inputs. See above.                           |
+| token              | False    | ""        | Token with `contents:read` for fetching a private host repo via `config`. Leave empty for public repos.                                                      |
 
 <!-- markdownlint-enable MD013 -->
 

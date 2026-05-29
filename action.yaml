@@ -83,6 +83,46 @@ inputs:
     # type: boolean
     required: false
     default: 'false'
+  config:
+    description: >
+      GitHub-Actions uses-style coordinate identifying a remote
+      allow-list file, fetched with a shallow, ref-pinned git fetch
+      (supports branch, tag or commit SHA). Mutually exclusive with
+      the allow_list_* inputs; supplying any of them together with
+      'config' is an error. See the README for the full grammar.
+    # type: string
+    required: false
+    default: ''
+  token:
+    description: >
+      Token used to authenticate the git fetch when 'config' targets
+      a private host repository. Leave empty for public repositories.
+      GITHUB_TOKEN only grants access to the current repository;
+      reading a private config repo in another org needs a PAT or
+      GitHub App token with contents:read on that repo.
+    # type: string
+    required: false
+    default: ''
+
+outputs:
+  resolved_host_org:
+    description: 'Host org the config file was fetched from'
+    value: "${{ steps.config_resolve.outputs.host_org }}"
+  resolved_repo:
+    description: 'Repository the config file was fetched from'
+    value: "${{ steps.config_resolve.outputs.repo }}"
+  resolved_ref:
+    description: 'Git ref requested for the config fetch'
+    value: "${{ steps.config_resolve.outputs.ref }}"
+  resolved_sha:
+    description: 'Exact commit SHA the config ref resolved to'
+    value: "${{ steps.config_resolve.outputs.resolved_sha }}"
+  resolved_path:
+    description: 'In-repo path of the matched config file'
+    value: "${{ steps.config_resolve.outputs.resolved_path }}"
+  matched_candidate:
+    description: 'Search candidate that matched'
+    value: "${{ steps.config_resolve.outputs.matched_candidate }}"
 
 runs:
   using: 'composite'
@@ -145,8 +185,63 @@ runs:
           pip install -q -r "$req_file"
         fi
 
+    - name: 'Resolve allow-list via config'
+      id: config_resolve
+      if: ${{ inputs.config != '' }}
+      shell: bash
+      env:
+        CONFIG: "${{ inputs.config }}"
+        TOKEN: "${{ inputs.token }}"
+        REPO_OWNER: "${{ github.repository_owner }}"
+        AL_PATH: "${{ inputs.allow_list_path }}"
+        AL_URL: "${{ inputs.allow_list_url }}"
+        AL_ORG: "${{ inputs.allow_list_org }}"
+        AL_DISABLE: "${{ inputs.allow_list_disable }}"
+        ACTION_PATH: "${{ github.action_path }}"
+      run: |
+        # Resolve allow-list via the 'config' uses-style coordinate.
+        set -euo pipefail
+
+        # Mask the token before anything else so it cannot leak.
+        if [ -n "$TOKEN" ]; then
+          echo "::add-mask::$TOKEN"
+        fi
+
+        # Exclusivity: 'config' must not combine with allow_list_*.
+        if [ -n "$AL_PATH" ] || [ -n "$AL_URL" ] || [ -n "$AL_ORG" ] \
+            || [ "$AL_DISABLE" = "true" ]; then
+          echo "::error::'config' is mutually exclusive with the" \
+               "allow_list_* inputs; specify only one mechanism"
+          exit 1
+        fi
+
+        # Preflight: the shared resolver needs python3 on the runner.
+        if ! command -v python3 >/dev/null 2>&1; then
+          echo "::error::python3 is required for the 'config' input" \
+               "but was not found on this runner"
+          exit 1
+        fi
+
+        # The shared resolver writes ids/count/resolved_* to
+        # GITHUB_OUTPUT and a block to GITHUB_STEP_SUMMARY. A missing
+        # file at an auto-derived path exits 0 with empty ids (soft);
+        # an explicitly-named missing file or any validation/network
+        # failure exits non-zero and fails this step.
+        python3 "${ACTION_PATH}/src/resolve_config_source.py" \
+          --config "$CONFIG" \
+          --workflow-org "$REPO_OWNER" \
+          --family python-audit \
+          --mode vulns \
+          --token-env TOKEN \
+          --content-key ids \
+          --summary-title "🐍 Python audit allow-list" \
+          --summary-unit Entries \
+          --github-output "$GITHUB_OUTPUT" \
+          --step-summary "$GITHUB_STEP_SUMMARY"
+
     - name: 'Resolve vulnerability allow-list'
       id: allow_list
+      if: ${{ inputs.config == '' }}
       shell: bash
       env:
         ALLOW_LIST_PATH: "${{ inputs.allow_list_path }}"
@@ -330,7 +425,8 @@ runs:
       shell: bash
       env:
         BASE_IGNORE: "${{ inputs.ignore_vulns }}"
-        ALLOW_LIST_IDS: "${{ steps.allow_list.outputs.ids }}"
+        # yamllint disable-line rule:line-length
+        ALLOW_LIST_IDS: "${{ steps.allow_list.outputs.ids }} ${{ steps.config_resolve.outputs.ids }}"
       run: |
         # Merge ignore_vulns with allow-list IDs (whitespace-
         # separated, de-duplicated, order-preserving).
