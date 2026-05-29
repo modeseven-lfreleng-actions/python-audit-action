@@ -50,9 +50,10 @@ inputs:
     description: >
       Local filesystem path to a vulnerability allow-list file. When
       set, takes precedence over allow_list_url and allow_list_org.
-      File format: whitespace-separated vulnerability IDs (CVE-,
-      GHSA-, PYSEC-, OSV-, PVE-); '#' introduces a comment (full-line
-      or trailing). Must not contain newline characters.
+      The path string itself must not contain newline characters; the
+      file it points to may be multi-line. File format:
+      whitespace-separated vulnerability IDs (CVE-, GHSA-, PYSEC-,
+      OSV-, PVE-); '#' introduces a comment (full-line or trailing).
     # type: string
     required: false
     default: ''
@@ -61,8 +62,8 @@ inputs:
       Remote HTTPS URL to download the allow-list from. Ignored when
       allow_list_path is set. When both allow_list_path and
       allow_list_url are empty the action constructs a default URL
-      from allow_list_org (see below). Must not contain newline
-      characters.
+      from allow_list_org (see below). The URL string itself must not
+      contain newline characters.
     # type: string
     required: false
     default: ''
@@ -88,8 +89,10 @@ inputs:
       GitHub-Actions uses-style coordinate identifying a remote
       allow-list file, fetched with a shallow, ref-pinned git fetch
       (supports branch, tag or commit SHA). Mutually exclusive with
-      the allow_list_* inputs; supplying any of them together with
-      'config' is an error. See the README for the full grammar.
+      the allow_list_path, allow_list_url, allow_list_org and
+      allow_list_disable inputs; supplying any of them together with
+      'config' is an error (allow_list_summary is still honoured). See
+      the README for the full grammar.
     # type: string
     required: false
     default: ''
@@ -108,8 +111,8 @@ inputs:
       Whether to write the allow-list/config block to the job step
       summary. Set to 'false' to suppress it. Useful for matrix jobs,
       where the same block would otherwise repeat once per leg; emit
-      it on a single leg with, e.g.,
-      allow_list_summary: ${{ strategy.job-index == 0 }}.
+      it on a single matrix leg only (see the README for the
+      strategy.job-index pattern).
     # type: boolean
     required: false
     default: 'true'
@@ -117,13 +120,13 @@ inputs:
 outputs:
   resolved_host_org:
     description: 'Host org the config file was fetched from'
-    value: "${{ steps.config_resolve.outputs.host_org }}"
+    value: "${{ steps.config_resolve.outputs.resolved_host_org }}"
   resolved_repo:
     description: 'Repository the config file was fetched from'
-    value: "${{ steps.config_resolve.outputs.repo }}"
+    value: "${{ steps.config_resolve.outputs.resolved_repo }}"
   resolved_ref:
     description: 'Git ref requested for the config fetch'
-    value: "${{ steps.config_resolve.outputs.ref }}"
+    value: "${{ steps.config_resolve.outputs.resolved_ref }}"
   resolved_sha:
     description: 'Exact commit SHA the config ref resolved to'
     value: "${{ steps.config_resolve.outputs.resolved_sha }}"
@@ -218,11 +221,13 @@ runs:
           echo "::add-mask::$TOKEN"
         fi
 
-        # Exclusivity: 'config' must not combine with allow_list_*.
+        # Exclusivity: 'config' must not combine with the allow-list
+        # source inputs (allow_list_summary is still honoured).
         if [ -n "$AL_PATH" ] || [ -n "$AL_URL" ] || [ -n "$AL_ORG" ] \
             || [ "$AL_DISABLE" = "true" ]; then
-          echo "::error::'config' is mutually exclusive with the" \
-               "allow_list_* inputs; specify only one mechanism"
+          echo "::error::'config' is mutually exclusive with" \
+               "allow_list_path/allow_list_url/allow_list_org/" \
+               "allow_list_disable; specify only one mechanism"
           exit 1
         fi
 
@@ -274,10 +279,13 @@ runs:
         # Precedence:
         #   allow_list_path > allow_list_url > default URL from org.
         # Soft-fail rule:
-        #   The default-URL case (no path, no url) treats fetch
-        #   failures as "no allow-list" and proceeds silently. An
-        #   explicitly-supplied path or url is a hard failure when
-        #   it cannot be loaded, since the caller asked for it.
+        #   In the default-URL case (no path, no url), only an HTTP 404
+        #   from the default URL is a soft miss (no central file
+        #   published) and proceeds silently. Transport failures
+        #   (DNS/TLS/timeout/max-filesize) and any other HTTP status
+        #   are hard errors. An explicitly-supplied path or url is a
+        #   hard failure when it cannot be loaded, since the caller
+        #   asked for it.
         # Sanitisation:
         #   Every token is matched against a strict allow-list of
         #   vulnerability ID shapes (CVE-/GHSA-/PYSEC-/OSV-/PVE-).
@@ -290,7 +298,7 @@ runs:
           # containing newlines (none of our outputs ever need them).
           local key="$1"
           local value="$2"
-          if printf '%s' "$value" | grep -q $'[\r\n]'; then
+          if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
             echo "::error::Refusing to write multi-line output for ${key}"
             exit 1
           fi
@@ -316,10 +324,12 @@ runs:
         fi
 
         # Reject newlines in path/url inputs to keep downstream
-        # GITHUB_OUTPUT writes safe.
+        # GITHUB_OUTPUT writes safe. Test the whole value with bash
+        # pattern matching: a line-by-line grep would accept a value
+        # whose first line is valid but which embeds a newline.
         for name in ALLOW_LIST_PATH ALLOW_LIST_URL; do
           value="${!name}"
-          if printf '%s' "$value" | grep -q $'[\r\n]'; then
+          if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
             echo "::error::Input '${name}' must not contain newline characters"
             exit 1
           fi
@@ -347,7 +357,22 @@ runs:
             # GitHub org/user names: 1-39 chars, alphanumerics and
             # hyphens, no leading/trailing hyphen, no consecutive
             # hyphens. A bad org name produces a URL that can never
-            # resolve; reject it up front.
+            # resolve; reject it up front. Reject newlines first with
+            # bash pattern matching, since the line-by-line grep below
+            # would otherwise accept a multi-line value whose first
+            # line happens to be a valid org.
+            if [[ "$org" == *$'\n'* || "$org" == *$'\r'* ]]; then
+              echo "::error::Org name must not contain newline characters"
+              exit 1
+            fi
+            # Enforce the 1-39 character limit explicitly: the ERE
+            # below cannot (its repeated group may consume a hyphen
+            # plus an alphanumeric, so it would otherwise admit names
+            # longer than 39 characters).
+            if [ "${#org}" -lt 1 ] || [ "${#org}" -gt 39 ]; then
+              echo "::error::Resolved org name length invalid: '${org}'"
+              exit 1
+            fi
             if ! printf '%s' "$org" \
               | grep -Eq '^[A-Za-z0-9](-?[A-Za-z0-9]){0,38}$'; then
               echo "::error::Resolved org name is invalid: '${org}'"
@@ -359,32 +384,46 @@ runs:
           fi
 
           # HTTPS-only, 15s timeout, 1 MiB size ceiling, follow
-          # redirects. --fail turns 4xx/5xx into curl exit codes.
+          # redirects. We deliberately omit --fail and capture the HTTP
+          # status separately so that a genuine "file absent" (404) can
+          # be distinguished from transport failures (DNS/TLS/timeout/
+          # max-filesize). Only a 404 at the default URL is a soft
+          # miss; transport errors and other HTTP statuses are hard
+          # failures even in default-url mode.
           tmp=$(mktemp)
           trap 'rm -f "$tmp"' EXIT
           set +e
-          curl --proto '=https' --tlsv1.2 \
-            -sSfL --max-time 15 --max-filesize 1048576 \
+          http_code=$(curl --proto '=https' --tlsv1.2 \
+            -sSL --max-time 15 --max-filesize 1048576 \
             -H 'User-Agent: lfreleng-actions/python-audit-action' \
             -H 'Accept: text/plain, */*;q=0.5' \
+            -w '%{http_code}' \
             -o "$tmp" \
-            "$resolved_url"
+            -- "$resolved_url")
           rc=$?
           set -e
           if [ "$rc" -ne 0 ]; then
-            if [ "$soft_fail" = "true" ]; then
-              # No allow-list published for this org; proceed
-              # silently with whatever ignore_vulns provided.
-              echo "No central allow-list at default URL;" \
-                   "proceeding without it"
-              emit "ids" ""
-              emit "source" "default-url-missing"
-              emit "resolved_url" "$resolved_url"
-              emit "count" "0"
-              exit 0
-            fi
+            # Transport failure (could not resolve/connect, TLS error,
+            # timeout, or response exceeded --max-filesize). Never a
+            # soft miss, since the file's presence is unknown.
             echo "::error::Failed to fetch allow-list from" \
                  "${resolved_url} (curl exit ${rc})"
+            exit 1
+          fi
+          if [ "$http_code" = "404" ] && [ "$soft_fail" = "true" ]; then
+            # No allow-list published for this org; proceed with
+            # whatever ignore_vulns provided.
+            echo "No central allow-list at default URL (HTTP 404);" \
+                 "proceeding without it"
+            emit "ids" ""
+            emit "source" "default-url-missing"
+            emit "resolved_url" "$resolved_url"
+            emit "count" "0"
+            exit 0
+          fi
+          if [ "$http_code" != "200" ]; then
+            echo "::error::Failed to fetch allow-list from" \
+                 "${resolved_url} (HTTP ${http_code})"
             exit 1
           fi
           raw=$(cat -- "$tmp")
@@ -409,7 +448,7 @@ runs:
         id_re+='|GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}'
         id_re+='|PYSEC-[0-9]{4}-[0-9]+'
         id_re+='|OSV-[0-9]{4}-[0-9]+'
-        id_re+='|PVE-[0-9]+'
+        id_re+='|PVE-[0-9]+(-[0-9]+)?'
         id_re+=')$'
         while IFS= read -r token; do
           [ -z "$token" ] && continue
@@ -425,6 +464,15 @@ runs:
           fi
           count=$((count + 1))
         done <<< "$cleaned"
+
+        # An allow-list file that parses to zero tokens (for example,
+        # a file containing only comments) is a misconfiguration. The
+        # shared config-mode resolver rejects this too, so keep the
+        # validation semantics identical across loading mechanisms.
+        if [ "$count" -eq 0 ]; then
+          echo "::error::Allow-list is empty after parsing (source: ${source})"
+          exit 1
+        fi
 
         echo "Loaded ${count} allow-list entries from source '${source}'"
         emit "ids" "$ids"

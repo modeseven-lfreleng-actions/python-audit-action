@@ -95,8 +95,17 @@ To audit all vulnerabilities and bypass default exclusions:
         uses: lfreleng-actions/python-audit-action@main
         with:
           python_version: ${{ matrix.python-version }}
-          ignore_vulns: ""  # Empty string clears defaults
+          ignore_vulns: ""            # Clears the ignore_vulns default
+          allow_list_disable: "true"  # Also skip the central allow-list
 ```
+
+> [!IMPORTANT]
+> An empty `ignore_vulns` resets that one input's default, but the
+> action still loads the central allow-list automatically (see below).
+> To audit **every** vulnerability, also set
+> `allow_list_disable: "true"` and do not pass `config` (`config` is
+> another allow-list source and is mutually exclusive with
+> `allow_list_disable`).
 
 ### Ignoring Specific Vulnerabilities
 
@@ -178,7 +187,7 @@ must match one of:
 - `GHSA-xxxx-xxxx-xxxx` (lowercase alphanumerics)
 - `PYSEC-YYYY-N+`
 - `OSV-YYYY-N+`
-- `PVE-N+`
+- `PVE-N+` or `PVE-N+-N+` (e.g. `PVE-2021-99`)
 
 Any token that does not match one of these patterns fails the step
 rather than passing through unrecognised.
@@ -206,11 +215,11 @@ supports branches, tags and commit SHAs, so you can pin the
 allow-list to an immutable commit, much like an action pin.
 
 > [!IMPORTANT]
-> `config` is **mutually exclusive** with the `allow_list_*` inputs.
-> Supplying any of `allow_list_path`, `allow_list_url`,
+> `config` is **mutually exclusive** with the allow-list *source*
+> inputs: supplying any of `allow_list_path`, `allow_list_url`,
 > `allow_list_org` or `allow_list_disable` together with `config` is
-> an error. The `ignore_vulns` input is *not* a source and still
-> merges with the IDs loaded via `config`.
+> an error. (`allow_list_summary` still applies, and `ignore_vulns`
+> is not a source and still merges with the IDs loaded via `config`.)
 
 ```yaml
       - name: "Audit project dependencies"
@@ -249,8 +258,10 @@ Defaults applied to anything you omit:
     default directory search.
   - **contains a `/`** — an explicit in-repo path; the action skips
     the search and that exact path must exist.
-- One or more spaces then `#` starts a trailing comment, which the
-  parser drops (`#`, `#`, `\t#` all work).
+- A `#` preceded by at least one space or tab starts a trailing
+  comment; the parser drops everything from that `#` to end of line.
+  A `#` with no preceding whitespace forms part of a token
+  (so `foo#bar` is a single token, not a comment).
 - The output `resolved_sha` always reports the commit the ref
   resolved to, even when you pin a branch or tag.
 
@@ -307,11 +318,11 @@ commit supplied the allow-list.
 
 > [!NOTE]
 > `config` resolution uses the runner's preinstalled `python3` (the
-> resolver needs no third-party packages). GitHub-hosted runners
-> ship it; on self-hosted runners `python3` must sit on `PATH`. Both
-> repositories mirror the shared parser
-> `src/resolve_config_source.py`, and changes must land as paired
-> pull requests across `python-audit-action` and
+> resolver needs no third-party packages) and shells out to `git` for
+> the fetch. GitHub-hosted runners ship both; on self-hosted runners
+> `python3` and `git` must sit on `PATH`. Both repositories mirror the
+> shared parser `src/resolve_config_source.py`, and changes must land
+> as paired pull requests across `python-audit-action` and
 > `harden-runner-block-action`.
 
 #### Suppressing the step summary on matrix jobs
@@ -336,22 +347,22 @@ template must cover both matrix and non-matrix jobs.
 
 <!-- markdownlint-disable MD013 -->
 
-| Variable Name      | Required | Default   | Description                                                                                                                                                  |
-| ------------------ | -------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| python_version     | True     | N/A       | Matrix job Python version                                                                                                                                    |
-| artefact_name      | False    |           | Custom name for downloaded artefacts (defaults to project name). Useful when building for different platforms/architectures to avoid artefact name conflicts |
-| permit_fail        | False    | False     | Continue/pass even when the audit fails                                                                                                                      |
-| artefact_path      | False    | "dist"    | Path/location to build artefacts                                                                                                                             |
-| summary            | False    | True      | Whether pypa/gh-action-pip-audit generates summary output                                                                                                    |
-| path_prefix        | False    | ""        | Path/directory to Python project code                                                                                                                        |
-| ignore_vulns       | False    | See below | Vulnerability IDs to ignore (whitespace separated). Merged with allow-list IDs.                                                                              |
-| allow_list_path    | False    |           | Local path to allow-list file. Highest precedence; overrides URL and org.                                                                                    |
-| allow_list_url     | False    |           | Explicit HTTPS URL to fetch the allow-list from. The action ignores this when `allow_list_path` has a value.                                                 |
-| allow_list_org     | False    |           | Org used to construct the default allow-list URL. Defaults to `github.repository_owner`.                                                                     |
-| allow_list_disable | False    | False     | Skip allow-list loading entirely.                                                                                                                            |
-| config             | False    | ""        | `uses:`-style coordinate for a git-fetched, SHA-pinnable allow-list. Mutually exclusive with the `allow_list_*` inputs. See above.                           |
-| token              | False    | ""        | Token with `contents:read` for fetching a private host repo via `config`. Leave empty for public repos.                                                      |
-| allow_list_summary | False    | True      | Write the allow-list/config block to the job step summary. Set `false` to suppress (e.g. on matrix legs other than the first). See note below.               |
+| Variable Name      | Required | Default   | Description                                                                                                                                                                                                                |
+| ------------------ | -------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| python_version     | True     | N/A       | Matrix job Python version                                                                                                                                                                                                  |
+| artefact_name      | False    |           | Custom name for downloaded artefacts (defaults to project name). Useful when building for different platforms/architectures to avoid artefact name conflicts                                                               |
+| permit_fail        | False    | False     | Continue/pass even when the audit fails                                                                                                                                                                                    |
+| artefact_path      | False    | "dist"    | Path/location to build artefacts                                                                                                                                                                                           |
+| summary            | False    | True      | Whether pypa/gh-action-pip-audit generates summary output                                                                                                                                                                  |
+| path_prefix        | False    | ""        | Path/directory to Python project code                                                                                                                                                                                      |
+| ignore_vulns       | False    | See below | Vulnerability IDs to ignore (whitespace separated). Merged with allow-list IDs.                                                                                                                                            |
+| allow_list_path    | False    |           | Local path to allow-list file. Highest precedence; overrides URL and org.                                                                                                                                                  |
+| allow_list_url     | False    |           | Explicit HTTPS URL to fetch the allow-list from. The action ignores this when `allow_list_path` has a value.                                                                                                               |
+| allow_list_org     | False    |           | Org used to construct the default allow-list URL. Defaults to `github.repository_owner`.                                                                                                                                   |
+| allow_list_disable | False    | False     | Skip allow-list loading entirely.                                                                                                                                                                                          |
+| config             | False    | ""        | `uses:`-style coordinate for a git-fetched, SHA-pinnable allow-list. Mutually exclusive with `allow_list_path`/`allow_list_url`/`allow_list_org`/`allow_list_disable` (but `allow_list_summary` still applies). See above. |
+| token              | False    | ""        | Token with `contents:read` for fetching a private host repo via `config`. Leave empty for public repos.                                                                                                                    |
+| allow_list_summary | False    | True      | Write the allow-list/config block to the job step summary. Set `false` to suppress (e.g. on matrix legs other than the first). See note below.                                                                             |
 
 <!-- markdownlint-enable MD013 -->
 
