@@ -143,7 +143,7 @@ runs:
     - name: 'Extract Python project naming/metadata'
       id: naming
       # yamllint disable-line rule:line-length
-      uses: lfreleng-actions/python-project-name-action@9f2cc7d37847d5f5497ba87d14e574b2f0a07462 # v0.1.6
+      uses: lfreleng-actions/python-project-name-action@4190dfce1bd534d7976dd031d455da392ff55321 # v0.1.7
       with:
         path_prefix: "${{ inputs.path_prefix }}"
 
@@ -162,7 +162,7 @@ runs:
         python-version: "${{ inputs.python_version }}"
 
     - name: 'Cache Python dependencies'
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v4.0.2
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: |
           ~/.cache/pip
