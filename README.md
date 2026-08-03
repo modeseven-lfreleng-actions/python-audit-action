@@ -272,11 +272,24 @@ directory after `//`), the action tries, in order:
 
 1. `.github/python-audit/<workflow-org>/<filename>` (org-specific)
 2. `.github/python-audit/<filename>` (host-wide family default)
+3. `.github/python-audit/<org>/<filename>` when a **single** org
+   directory in the fetched tree carries the file (sole-org fallback)
 
-The first file that exists wins. If neither exists, the action
-proceeds with `ignore_vulns` alone (soft, no warning) — consistent
-with the default-URL behaviour above. An **explicit** path that is
-missing is always a hard error.
+The first file that exists wins. The sole-org fallback covers forks:
+a fork's `.github` repository carries the upstream org's file at the
+pinned ref, but the workflow org resolves to the fork owner, which
+prevents the org-specific candidate from matching there. With a
+single org directory present the choice is unambiguous and the
+ref-pinned content is byte-identical to upstream; two or more org
+directories keep the miss (the choice would be ambiguous). Explicit
+paths never fall back.
+
+If no candidate exists, the action
+proceeds with `ignore_vulns` alone (soft) — consistent with the
+default-URL behaviour above. When the sole-org fallback finds the
+file under two or more org directories it notes the ambiguity on
+stderr, but the miss stays soft in the same way. An **explicit**
+path that is missing is always a hard error.
 
 #### `config` examples
 
