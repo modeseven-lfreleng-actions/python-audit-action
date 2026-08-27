@@ -143,7 +143,7 @@ runs:
     - name: 'Extract Python project naming/metadata'
       id: naming
       # yamllint disable-line rule:line-length
-      uses: lfreleng-actions/python-project-name-action@4190dfce1bd534d7976dd031d455da392ff55321 # v0.1.7
+      uses: lfreleng-actions/python-project-name-action@5080b6e504fe972dd2c9a06482f2366096c259af # v0.1.8
       with:
         path_prefix: "${{ inputs.path_prefix }}"
 
