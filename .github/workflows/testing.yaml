@@ -47,6 +47,7 @@ jobs:
 
       # Build sample Python project
       - name: "Build Python Project"
+        id: build
         # yamllint disable-line rule:line-length
         uses: lfreleng-actions/python-build-action@1a1d011cd71e781f9b7896fc9a8c5653406a7758 # v2.1.0
         with:
@@ -57,7 +58,8 @@ jobs:
       - name: "Run action: ${{ github.repository }}"
         uses: ./
         with:
-          python_version: "${{ env.build_python }}"
+          # yamllint disable-line rule:line-length
+          python_version: "${{ steps.build.outputs.build_python_version }}"
           path_prefix: "test-python-project/"
 
       - name: "Inject known defective dependency"
@@ -116,7 +118,8 @@ jobs:
         # Override failure
         continue-on-error: true
         with:
-          python_version: "${{ env.build_python }}"
+          # yamllint disable-line rule:line-length
+          python_version: "${{ steps.build.outputs.build_python_version }}"
           path_prefix: "test-python-project/"
 
       - name: "Validate previous step failure"
@@ -132,7 +135,8 @@ jobs:
         id: tests-fail-permitted
         uses: ./
         with:
-          python_version: "${{ env.build_python }}"
+          # yamllint disable-line rule:line-length
+          python_version: "${{ steps.build.outputs.build_python_version }}"
           path_prefix: "test-python-project/"
           # Override failure
           permit_fail: true
@@ -172,6 +176,7 @@ jobs:
       - name: "Run action with custom artefact_name"
         uses: ./
         with:
-          python_version: "${{ env.build_python }}"
+          # yamllint disable-line rule:line-length
+          python_version: "${{ steps.build-custom.outputs.build_python_version }}"
           path_prefix: "test-python-project/"
           artefact_name: "test-python-project-x64"
