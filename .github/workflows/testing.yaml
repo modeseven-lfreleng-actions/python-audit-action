@@ -219,8 +219,10 @@ jobs:
           path: "no-wheels"
           if-no-files-found: error
 
-      # Any supported Python version will do: the assertion below
-      # concerns the install step, which runs after Python setup.
+      # This proves the action fails cleanly on a real runner, but it
+      # cannot on its own prove the guard is what failed: without the
+      # guard, pip chokes on the literal pattern and the outcome is the
+      # same. tests/test_install_step_guard.py draws that distinction.
       - name: "Run action against wheel-free artefact"
         id: no-wheels
         uses: ./
@@ -250,3 +252,29 @@ jobs:
             exit 1
           fi
           echo 'Action failed as expected, with wheels absent ✅'
+
+  ### Unit cover proving the guard is what rejects an empty directory ###
+  tests-install-guard:
+    name: "Test Install Step Guard"
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Setup Python"
+        # yamllint disable-line rule:line-length
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: "Run install step guard tests"
+        shell: bash
+        run: |
+          # Run install step guard tests
+          python -m pip install --disable-pip-version-check -q pytest pyyaml
+          python -m pytest tests/test_install_step_guard.py -q
