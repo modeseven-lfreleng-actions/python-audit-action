@@ -193,8 +193,26 @@ runs:
         python -m pip install --disable-pip-version-check \
           -q --upgrade pip setuptools
         echo 'Installing built package(s) and dependencies'
-        for wheel in "$INPUT_ARTEFACT_PATH"/*.whl; do
-                pip install -q "$wheel"
+        # Collect the wheels via the glob directly. nullglob makes the
+        # pattern expand to nothing (rather than the literal pattern)
+        # when nothing matches, so an empty or mis-named artefact
+        # directory reports that plainly instead of handing pip a
+        # literal '*.whl' to choke on. It also handles filenames
+        # containing whitespace safely.
+        shopt -s nullglob
+        wheels=("$INPUT_ARTEFACT_PATH"/*.whl)
+        shopt -u nullglob
+
+        if [ "${#wheels[@]}" -eq 0 ]; then
+          echo "Error: no wheels found in: $INPUT_ARTEFACT_PATH ❌"
+          echo 'Check that the build uploaded artefacts, and that'
+          echo 'artefact_name matches the name used at upload time'
+          exit 1
+        fi
+
+        echo "Wheels to install: ${#wheels[@]}"
+        for wheel in "${wheels[@]}"; do
+          pip install -q "$wheel"
         done
         # Check for requirements.txt in path_prefix if provided
         req_file="${path_prefix:+$path_prefix/}requirements.txt"
