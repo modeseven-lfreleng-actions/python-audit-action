@@ -180,3 +180,73 @@ jobs:
           python_version: "${{ steps.build-custom.outputs.build_python_version }}"
           path_prefix: "test-python-project/"
           artefact_name: "test-python-project-x64"
+
+  ### Verify the action fails clearly when no wheels are present ###
+  tests-no-wheels:
+    name: "Test No Wheels Guard"
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 12
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Checkout sample project repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: "lfreleng-actions/test-python-project"
+          path: "test-python-project"
+
+      # An artefact that downloads cleanly but holds no wheels. A
+      # missing artefact would fail earlier, in the download step,
+      # and never reach the install step under test here.
+      - name: "Create wheel-free artefact"
+        shell: bash
+        run: |
+          # Create wheel-free artefact
+          mkdir -p no-wheels
+          echo 'Contains no wheels' > no-wheels/README.txt
+
+      - name: "Upload wheel-free artefact"
+        # yamllint disable-line rule:line-length
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "no-wheels-fixture"
+          path: "no-wheels"
+          if-no-files-found: error
+
+      # Any supported Python version will do: the assertion below
+      # concerns the install step, which runs after Python setup.
+      - name: "Run action against wheel-free artefact"
+        id: no-wheels
+        uses: ./
+        continue-on-error: true
+        with:
+          python_version: "3.13"
+          path_prefix: "test-python-project/"
+          artefact_name: "no-wheels-fixture"
+
+      - name: "Validate the no-wheels guard fired"
+        shell: bash
+        env:
+          OUTCOME: "${{ steps.no-wheels.outcome }}"
+        run: |
+          # Validate the no-wheels guard fired
+          # The artefact downloads into the default artefact_path, so
+          # its presence proves the download step succeeded and the
+          # failure came later, at the install step being tested.
+          if [ ! -f dist/README.txt ]; then
+            echo 'Error: artefact did not download; wrong failure ❌'
+            ls -la dist 2>/dev/null || echo 'dist/ absent'
+            exit 1
+          fi
+          if [ "$OUTCOME" != 'failure' ]; then
+            echo 'Error: action succeeded despite there being no wheels ❌'
+            echo "Actual outcome: $OUTCOME"
+            exit 1
+          fi
+          echo 'Action failed as expected, with wheels absent ✅'
