@@ -57,6 +57,40 @@ jobs:
           python_version: "${{ steps.build.outputs.build_python_version }}"
           path_prefix: "test-python-project/"
 
+      # An unrecognised permit_fail must fail closed (#215). The inputs
+      # match the passing run above, bar permit_fail and a fresh
+      # artefact_path. Validation runs before the artefact download, so
+      # that directory staying absent proves validation, not a later
+      # step, failed the action. Without validation the strict audit of
+      # this clean project would pass, as the run above shows.
+      - name: "Run action: ${{ github.repository }} [Invalid permit_fail]"
+        id: tests-invalid-permit-fail
+        uses: $/
+        continue-on-error: true
+        with:
+          # yamllint disable-line rule:line-length
+          python_version: "${{ steps.build.outputs.build_python_version }}"
+          path_prefix: "test-python-project/"
+          artefact_path: "permit-fail-probe"
+          permit_fail: "yes"
+
+      - name: "Validate invalid permit_fail was rejected"
+        shell: bash
+        env:
+          OUTCOME: "${{ steps.tests-invalid-permit-fail.outcome }}"
+        run: |
+          # Validate invalid permit_fail was rejected
+          if [ "$OUTCOME" != 'failure' ]; then
+            echo "Error: permit_fail 'yes' did not fail the action ❌"
+            echo "Actual outcome: $OUTCOME"
+            exit 1
+          fi
+          if [ -e permit-fail-probe ]; then
+            echo 'Error: action got past validation; wrong failure ❌'
+            exit 1
+          fi
+          echo "permit_fail 'yes' rejected by input validation ✅"
+
       - name: "Inject known defective dependency"
         shell: bash
         env:
@@ -263,3 +297,30 @@ jobs:
           # Run install step guard tests
           python -m pip install --disable-pip-version-check -q pytest pyyaml
           python -m pytest tests/test_install_step_guard.py -q
+
+  ### Unit cover for issue #215: permit_fail and cache scope ###
+  tests-permit-fail-validation:
+    name: "Test permit_fail Validation and Cache Scope"
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Setup Python"
+        # yamllint disable-line rule:line-length
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: "Run permit_fail validation and cache scope tests"
+        shell: bash
+        run: |
+          # Run permit_fail validation and cache scope tests
+          python -m pip install --disable-pip-version-check -q pytest pyyaml
+          python -m pytest tests/test_permit_fail_validation.py \
+            tests/test_dependency_cache.py -q

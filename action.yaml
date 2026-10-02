@@ -19,7 +19,9 @@ inputs:
     required: false
     # type: string
   permit_fail:
-    description: 'Continue/pass even when the audit fails'
+    description: >
+      Continue/pass even when the audit fails. Accepts 'true' or
+      'false' (any case); any other value fails the action.
     required: false
     # type: boolean
     default: 'false'
@@ -140,6 +142,33 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # Runs first so a bad value fails before any download or install.
+    - name: 'Validate permit_fail input'
+      shell: bash
+      env:
+        PERMIT_FAIL: "${{ inputs.permit_fail }}"
+      run: |
+        # Validate permit_fail
+        # The audit steps compare this input to 'true'/'false' in
+        # case-insensitive expressions. Any other value (yes, 1, an
+        # empty string from an unset variable) must fail closed rather
+        # than risk the audit being skipped. The case globs match the
+        # whole value, so surrounding whitespace or newlines are
+        # rejected, exactly as the expressions would not match them.
+        set -euo pipefail
+        case "$PERMIT_FAIL" in
+          [Tt][Rr][Uu][Ee] | [Ff][Aa][Ll][Ss][Ee])
+            echo "permit_fail: ${PERMIT_FAIL}"
+            ;;
+          *)
+            # %q renders the value on one line, so it cannot inject
+            # a workflow command through an embedded newline.
+            printf '::error::Invalid permit_fail value: %q' "$PERMIT_FAIL"
+            printf " (expected 'true' or 'false', any case)\n"
+            exit 1
+            ;;
+        esac
+
     - name: 'Extract Python project naming/metadata'
       id: naming
       # yamllint disable-line rule:line-length
@@ -163,19 +192,19 @@ runs:
       with:
         python-version: "${{ inputs.python_version }}"
 
+    # Only pip's cache is populated here: the install step runs pip
+    # into the setup-python interpreter, never creating a venv or using
+    # Poetry/Pipenv. The key hashes exactly what that step installs:
+    # the top-level wheels in artefact_path (downloaded above) and the
+    # optional requirements.txt in path_prefix.
     - name: 'Cache Python dependencies'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: |
-          ~/.cache/pip
-          ~/.cache/pypoetry
-          ~/.cache/pipenv
-          .venv
-          .tox
+        path: ~/.cache/pip
         # yamllint disable rule:line-length
         key: >-
           python-${{ runner.os }}-${{ runner.arch }}-${{ inputs.python_version }}-
-          ${{ hashFiles('**/requirements*.txt', '**/pyproject.toml', '**/poetry.lock', '**/Pipfile*', '**/setup.py', '**/setup.cfg') }}
+          ${{ hashFiles(format('{0}/*.whl', inputs.artefact_path), format('{0}/requirements.txt', inputs.path_prefix || '.')) }}
         restore-keys: |
           python-${{ runner.os }}-${{ runner.arch }}-${{ inputs.python_version }}-
           python-${{ runner.os }}-${{ runner.arch }}-
@@ -534,8 +563,10 @@ runs:
           echo "Effective ignore_vulns: (none)"
         fi
 
+    # Strict unless permit_fail is exactly 'true' (case-insensitive),
+    # so an unrecognised value can never skip both audit steps.
     - name: 'Auditing with: pypa/gh-action-pip-audit'
-      if: ${{ inputs.permit_fail == 'false' }}
+      if: ${{ inputs.permit_fail != 'true' }}
       # yamllint disable-line rule:line-length
       uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
       with:
