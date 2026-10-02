@@ -51,11 +51,25 @@ jobs:
 
       # Perform Python project audit
       - name: "Run action: ${{ github.repository }}"
+        id: tests-pass
         uses: $/
         with:
           # yamllint disable-line rule:line-length
           python_version: "${{ steps.build.outputs.build_python_version }}"
           path_prefix: "test-python-project/"
+
+      - name: "Validate clean audit ran and passed"
+        shell: bash
+        env:
+          AUDIT_OUTCOME: "${{ steps.tests-pass.outputs.audit_outcome }}"
+        run: |
+          # Validate clean audit ran and passed
+          if [ "$AUDIT_OUTCOME" != 'success' ]; then
+            echo 'Error: clean project audit did not run and pass ❌'
+            echo "audit_outcome: $AUDIT_OUTCOME"
+            exit 1
+          fi
+          echo 'Clean project audit ran and passed ✅'
 
       # An unrecognised permit_fail must fail closed (#215). The inputs
       # match the passing run above, bar permit_fail and a fresh
@@ -78,6 +92,8 @@ jobs:
         shell: bash
         env:
           OUTCOME: "${{ steps.tests-invalid-permit-fail.outcome }}"
+          # yamllint disable-line rule:line-length
+          AUDIT_OUTCOME: "${{ steps.tests-invalid-permit-fail.outputs.audit_outcome }}"
         run: |
           # Validate invalid permit_fail was rejected
           if [ "$OUTCOME" != 'failure' ]; then
@@ -87,6 +103,12 @@ jobs:
           fi
           if [ -e permit-fail-probe ]; then
             echo 'Error: action got past validation; wrong failure ❌'
+            exit 1
+          fi
+          # No audit step ran, so the output must say so
+          if [ "$AUDIT_OUTCOME" != 'skipped' ]; then
+            echo 'Error: audit_outcome should be skipped ❌'
+            echo "audit_outcome: $AUDIT_OUTCOME"
             exit 1
           fi
           echo "permit_fail 'yes' rejected by input validation ✅"
@@ -152,12 +174,24 @@ jobs:
           path_prefix: "test-python-project/"
 
       - name: "Validate previous step failure"
-        if: steps.tests-fail.outcome == 'success'
         shell: bash
+        env:
+          OUTCOME: "${{ steps.tests-fail.outcome }}"
+          AUDIT_OUTCOME: "${{ steps.tests-fail.outputs.audit_outcome }}"
         run: |
           # Check previous step failure
-          echo "Error: previous step should have failed ❌"
-          exit 1
+          if [ "$OUTCOME" != 'failure' ]; then
+            echo 'Error: previous step should have failed ❌'
+            echo "Actual outcome: $OUTCOME"
+            exit 1
+          fi
+          # Failing in any earlier step would also fail the action
+          if [ "$AUDIT_OUTCOME" != 'failure' ]; then
+            echo 'Error: action failed, but not in the audit ❌'
+            echo "audit_outcome: $AUDIT_OUTCOME"
+            exit 1
+          fi
+          echo 'Audit failed on the known vulnerability ✅'
 
       # Perform audit where project has known security vulnerability
       - name: "Run action: ${{ github.repository }} [Failure Test]"
@@ -169,6 +203,22 @@ jobs:
           path_prefix: "test-python-project/"
           # Override failure
           permit_fail: true
+
+      # The action passing above shows only that nothing failed it. An
+      # audit that never ran, or ran and found nothing, passes too (#216)
+      - name: "Validate permitted failure was a real audit failure"
+        shell: bash
+        env:
+          # yamllint disable-line rule:line-length
+          AUDIT_OUTCOME: "${{ steps.tests-fail-permitted.outputs.audit_outcome }}"
+        run: |
+          # Validate permitted failure was a real audit failure
+          if [ "$AUDIT_OUTCOME" != 'failure' ]; then
+            echo 'Error: audit did not run or found nothing ❌'
+            echo "audit_outcome: $AUDIT_OUTCOME"
+            exit 1
+          fi
+          echo 'permit_fail suppressed a real audit failure ✅'
 
   ### Test custom artefact_name support ###
   tests-custom-artefact-name:

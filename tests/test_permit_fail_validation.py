@@ -105,7 +105,6 @@ def test_audit_gates_are_complementary():
     ], gates
 
 
-@pytest.mark.xfail(strict=True, reason="audit_outcome not yet added (#216)")
 def test_audit_steps_have_distinct_ids():
     """audit_outcome can only read an audit step that has its own id."""
     ids = _audit_step_ids()
@@ -114,7 +113,6 @@ def test_audit_steps_have_distinct_ids():
     assert len(set(ids)) == len(ids), ids
 
 
-@pytest.mark.xfail(strict=True, reason="audit_outcome not yet added (#216)")
 def test_audit_outcome_reads_each_audit_step_outcome():
     """audit_outcome reports the outcome of whichever audit step ran.
 

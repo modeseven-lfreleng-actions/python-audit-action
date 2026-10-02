@@ -379,6 +379,18 @@ template must cover both matrix and non-matrix jobs.
 
 <!-- markdownlint-enable MD013 -->
 
+## Outputs
+
+<!-- markdownlint-disable MD013 -->
+
+| Variable Name | Description                                                                                                                                                                 |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| audit_outcome | Outcome of the pip-audit step that ran: `success`, `failure` or `cancelled`, or `skipped` when no audit ran. Reports `failure` even when `permit_fail` let the action pass. |
+
+<!-- markdownlint-enable MD013 -->
+
+Using `config` adds further outputs; see [`config` outputs](#config-outputs).
+
 ## Audit Implementation
 
 The audit process uses an external public action:

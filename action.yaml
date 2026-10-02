@@ -120,6 +120,18 @@ inputs:
     default: 'true'
 
 outputs:
+  audit_outcome:
+    description: >-
+      Outcome of the pip-audit step that ran: 'success', 'failure' or
+      'cancelled', or 'skipped' when no audit ran. Reports 'failure'
+      even when permit_fail let the action pass.
+    # outcome, not conclusion: continue-on-error turns the permitted
+    # step's conclusion into 'success' even when the audit failed.
+    value: >-
+      ${{ steps.audit_strict.outcome != 'skipped'
+      && steps.audit_strict.outcome
+      || steps.audit_permitted.outcome
+      || 'skipped' }}
   resolved_host_org:
     description: 'Host org the config file was fetched from'
     value: "${{ steps.config_resolve.outputs.resolved_host_org }}"
@@ -566,6 +578,7 @@ runs:
     # Strict unless permit_fail is exactly 'true' (case-insensitive),
     # so an unrecognised value can never skip both audit steps.
     - name: 'Auditing with: pypa/gh-action-pip-audit'
+      id: audit_strict
       if: ${{ inputs.permit_fail != 'true' }}
       # yamllint disable-line rule:line-length
       uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266 # v1.1.0
@@ -575,6 +588,7 @@ runs:
         ignore-vulns: "${{ steps.merged.outputs.ignore_vulns }}"
 
     - name: 'Auditing with: pypa/gh-action-pip-audit'
+      id: audit_permitted
       if: ${{ inputs.permit_fail == 'true' }}
       continue-on-error: true
       # yamllint disable-line rule:line-length
