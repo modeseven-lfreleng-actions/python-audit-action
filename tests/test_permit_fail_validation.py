@@ -1,14 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 The Linux Foundation
 
-"""Regression cover for permit_fail failing closed (issue #215).
+"""Regression cover for permit_fail (issues #215 and #216).
 
 The audit steps used to be gated on ``permit_fail == 'false'`` and
 ``permit_fail == 'true'``, so any other value skipped both of them and
-the action passed without auditing anything.
+the action passed without auditing anything (#215).
 
-The validation script is read out of ``action.yaml`` rather than
-copied here, so the tests cannot drift from the implementation.
+With ``permit_fail: true`` the action passes whatever the audit finds,
+so nothing showed that the audit had run at all (#216). The
+``audit_outcome`` output reports the outcome of whichever audit step
+ran, and the workflow tests assert on it end to end.
+
+The validation script and output are read out of ``action.yaml``
+rather than copied here, so the tests cannot drift from the
+implementation.
 """
 
 from __future__ import annotations
@@ -23,12 +29,22 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VALIDATE_STEP = "Validate permit_fail input"
 AUDIT_STEP = "Auditing with: pypa/gh-action-pip-audit"
+AUDIT_OUTCOME = "audit_outcome"
+
+
+def _action() -> dict:
+    """Return the parsed action.yaml."""
+    return yaml.safe_load((REPO_ROOT / "action.yaml").read_text())
 
 
 def _steps() -> list[dict]:
     """Return the composite action's steps, read from action.yaml."""
-    action = yaml.safe_load((REPO_ROOT / "action.yaml").read_text())
-    return action["runs"]["steps"]
+    return _action()["runs"]["steps"]
+
+
+def _audit_step_ids() -> list[str | None]:
+    """Return the id of each audit step, None where it has none."""
+    return [s.get("id") for s in _steps() if s.get("name") == AUDIT_STEP]
 
 
 def _run_validation(value: str) -> subprocess.CompletedProcess[str]:
@@ -87,3 +103,25 @@ def test_audit_gates_are_complementary():
         "${{ inputs.permit_fail != 'true' }}",
         "${{ inputs.permit_fail == 'true' }}",
     ], gates
+
+
+def test_audit_steps_have_distinct_ids():
+    """audit_outcome can only read an audit step that has its own id."""
+    ids = _audit_step_ids()
+    assert len(ids) == 2, ids
+    assert all(ids), ids
+    assert len(set(ids)) == len(ids), ids
+
+
+def test_audit_outcome_reads_each_audit_step_outcome():
+    """audit_outcome reports the outcome of whichever audit step ran.
+
+    It must read ``outcome``, not ``conclusion``: continue-on-error
+    turns the permitted step's conclusion into 'success' even when the
+    audit failed, which would hide the failure the output exists to
+    report.
+    """
+    value = _action()["outputs"][AUDIT_OUTCOME]["value"]
+    for step_id in _audit_step_ids():
+        assert f"steps.{step_id}.outcome" in value, value
+    assert ".conclusion" not in value, value
