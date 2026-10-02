@@ -4,6 +4,11 @@
 
 ci:
   autofix_prs: false
+  # basedpyright: with the packages the code imports, its environment
+  # measures 282 MiB on macOS and 293 MiB on Linux x86_64 (pre-commit.ci
+  # reported 264.6 MiB), over the 250 MiB per-hook limit; nodejs-wheel
+  # is over 200 MiB of that. No workflow runs it either, so only local
+  # commits enforce it.
   skip:
     - gha-workflow-linter
     - aislop
@@ -76,10 +81,8 @@ repos:
     rev: a56c0b927e6465d37cae3e97d35d4d18ab2b96cd  # frozen: v0.16.9
     hooks:
       - id: ruff
-        files: ^(src|scripts|tests|custom_components)/.+\.py$
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
-        files: ^(src|scripts|tests|custom_components)/.+\.py$
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: 7ff8d35ae36a7d2b968f2f90b4c723e292e594ee  # frozen: v2.3.1
@@ -124,7 +127,14 @@ repos:
     rev: 706e6acebe9e88c2c28d1527d3085a14b11794c4  # frozen: 1.40.1
     hooks:
       - id: basedpyright
-        additional_dependencies: ["pytest", "pyyaml"]
+        # --warnings fails on warnings too, not only errors. Explicit
+        # directories with filename passing off keep the whole tree in
+        # scope when only some files are staged.
+        pass_filenames: false
+        # Run even when no Python is staged: deletions and config changes.
+        always_run: true
+        args: [--warnings, src, tests]
+        additional_dependencies: ["pytest", "pyyaml", "types-pyyaml"]
 
   - repo: https://github.com/lfreleng-actions/gha-workflow-linter
     rev: 0c582e431022f1c7004196fb4ea32744d1fe4843  # frozen: v1.7.0
