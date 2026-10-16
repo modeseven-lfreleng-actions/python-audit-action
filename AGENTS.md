@@ -33,5 +33,8 @@ a pull request, not the full set:
 
 ## Repository specifics
 
-None: working in this repository needs nothing beyond the organisation
-guidelines.
+`uv.lock` pins the self-tests' dependencies; run them with
+`uv run --locked python -m pytest tests -q`. After changing the `dev`
+dependency group in `pyproject.toml`, regenerate the lockfile with
+`uv lock`, using the uv version the workflows pin, so `--locked` keeps
+passing in CI.
